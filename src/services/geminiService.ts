@@ -44,3 +44,24 @@ export async function* vibeCodeStream(
     }
   }
 }
+
+export async function fixTranscriptText(text: string): Promise<string> {
+  const aiClient = getGemini();
+
+  const response = await aiClient.models.generateContent({
+    model: 'gemini-2.5-flash',
+    contents: [
+      {
+        role: 'user',
+        parts: [
+          { text: `Please correct the punctuation, capitalization, and minor grammatical errors in the following transcribed speech, making it readable and clear. Do not change the original meaning or add new information. Only output the corrected text, nothing else.\n\nText: ${text}` },
+        ],
+      },
+    ],
+    config: {
+      temperature: 0.1, // Low temperature for consistency
+    },
+  });
+
+  return response.text || text;
+}

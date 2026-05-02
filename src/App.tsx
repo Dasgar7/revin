@@ -14,6 +14,7 @@ import {
   X,
   Loader,
   ArrowUp,
+  Mic,
 } from "lucide-react";
 import Markdown from "react-markdown";
 import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
@@ -28,7 +29,7 @@ import {
 } from "@codesandbox/sandpack-react";
 import JSZip from "jszip";
 import { saveAs } from "file-saver";
-import { vibeCodeStream } from "./services/geminiService";
+import { vibeCodeStream, fixTranscriptText } from "./services/geminiService";
 
 interface Message {
   id: string;
@@ -348,6 +349,76 @@ export default function App() {
   ]);
   const [input, setInput] = useState("");
   const [isLoading, setIsLoading] = useState(false);
+  const [isRecording, setIsRecording] = useState(false);
+  const recognitionRef = useRef<any>(null);
+  const isFixingTranscriptRef = useRef(false);
+
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      const SpeechRecognition =
+        (window as any).SpeechRecognition ||
+        (window as any).webkitSpeechRecognition;
+      if (SpeechRecognition) {
+        recognitionRef.current = new SpeechRecognition();
+        recognitionRef.current.continuous = true;
+        recognitionRef.current.interimResults = true;
+
+        recognitionRef.current.onresult = (event: any) => {
+          let currentTranscript = "";
+          for (let i = 0; i < event.results.length; i++) {
+            currentTranscript += event.results[i][0].transcript;
+          }
+          setInput(currentTranscript);
+        };
+
+        recognitionRef.current.onerror = (event: any) => {
+          console.error("Speech recognition error", event.error);
+          if (event.error === 'not-allowed') {
+            alert('Microphone access was denied. Please allow microphone access in your browser settings to use voice input.');
+          }
+          setIsRecording(false);
+        };
+      }
+    }
+  }, []);
+
+  const toggleRecording = async () => {
+    if (isFixingTranscriptRef.current) return;
+
+    if (isRecording) {
+      if (recognitionRef.current) {
+        recognitionRef.current.stop();
+      }
+      setIsRecording(false);
+      
+      if (input.trim()) {
+        isFixingTranscriptRef.current = true;
+        try {
+          setIsLoading(true);
+          const fixedText = await fixTranscriptText(input);
+          setInput(fixedText);
+        } catch (err) {
+          console.error("Failed to fix transcript", err);
+        } finally {
+          setIsLoading(false);
+          isFixingTranscriptRef.current = false;
+        }
+      }
+    } else {
+      if (recognitionRef.current) {
+        try {
+          recognitionRef.current.start();
+          setIsRecording(true);
+          setInput("");
+        } catch (e) {
+          console.error(e);
+        }
+      } else {
+        alert("Speech recognition is not supported in this browser.");
+      }
+    }
+  };
+
   const [viewMode, setViewMode] = useState<"code" | "preview">("code");
   const [expandedThoughts, setExpandedThoughts] = useState<
     Record<string, boolean>
@@ -645,13 +716,22 @@ export default function App() {
                     </>
                   )}
                 </div>
-                <button
-                  type="submit"
-                  disabled={!input.trim()}
-                  className="w-10 h-10 rounded-full bg-white flex items-center justify-center hover:bg-gray-200 transition-colors shrink-0 disabled:opacity-50 disabled:cursor-not-allowed"
-                >
-                  <ArrowUp size={20} className="text-black" />
-                </button>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={toggleRecording}
+                    className={`w-10 h-10 rounded-full flex items-center justify-center transition-colors shrink-0 ${isRecording ? 'bg-red-500 hover:bg-red-600 animate-pulse' : 'bg-[#2b2d31] hover:bg-[#383a40] border border-white/5'}`}
+                  >
+                    <Mic size={20} className={isRecording ? "text-white" : "text-gray-400"} />
+                  </button>
+                  <button
+                    type="submit"
+                    disabled={!input.trim()}
+                    className="w-10 h-10 rounded-full bg-white flex items-center justify-center hover:bg-gray-200 transition-colors shrink-0 disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    <ArrowUp size={20} className="text-black" />
+                  </button>
+                </div>
               </div>
             </form>
           </div>
@@ -869,13 +949,22 @@ export default function App() {
                   </>
                 )}
               </div>
-              <button
-                type="submit"
-                disabled={!input.trim()}
-                className="w-9 h-9 rounded-full bg-white flex items-center justify-center hover:bg-gray-200 transition-colors shrink-0 disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                <ArrowUp size={18} className="text-black" />
-              </button>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={toggleRecording}
+                  className={`w-9 h-9 rounded-full flex items-center justify-center transition-colors shrink-0 ${isRecording ? 'bg-red-500 hover:bg-red-600 animate-pulse' : 'bg-[#2b2d31] hover:bg-[#383a40] border border-white/5'}`}
+                >
+                  <Mic size={18} className={isRecording ? "text-white" : "text-gray-400"} />
+                </button>
+                <button
+                  type="submit"
+                  disabled={!input.trim()}
+                  className="w-9 h-9 rounded-full bg-white flex items-center justify-center hover:bg-gray-200 transition-colors shrink-0 disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  <ArrowUp size={18} className="text-black" />
+                </button>
+              </div>
             </div>
           </form>
         </div>
