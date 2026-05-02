@@ -426,6 +426,20 @@ export default function App() {
   const [expandedThoughts, setExpandedThoughts] = useState<
     Record<string, boolean>
   >({});
+  const [deferredPrompt, setDeferredPrompt] = useState<any>(null);
+
+  useEffect(() => {
+    const handleBeforeInstallPrompt = (e: any) => {
+      e.preventDefault();
+      setDeferredPrompt(e);
+    };
+
+    window.addEventListener('beforeinstallprompt', handleBeforeInstallPrompt);
+
+    return () => {
+      window.removeEventListener('beforeinstallprompt', handleBeforeInstallPrompt);
+    };
+  }, []);
 
   const [isCalling, setIsCalling] = useState(false);
   const [callState, setCallState] = useState<"idle" | "listening" | "thinking" | "speaking">("idle");
@@ -698,6 +712,19 @@ export default function App() {
     }
   };
 
+  const handleInstallClick = async () => {
+    if (!deferredPrompt) {
+      alert("To install the mobile app, please open this app in a new tab, or use your browser's 'Add to Home Screen' / 'Install App' option from the URL bar.");
+      return;
+    }
+    deferredPrompt.prompt();
+    const { outcome } = await deferredPrompt.userChoice;
+    console.log(`User response to the install prompt: ${outcome}`);
+    if (outcome === 'accepted') {
+      setDeferredPrompt(null);
+    }
+  };
+
   const handleDownloadZip = async (files: Record<string, string>) => {
     const zip = new JSZip();
     Object.entries(files).forEach(([name, content]) => {
@@ -907,6 +934,15 @@ export default function App() {
   if (isHome) {
     return (
       <div className="flex flex-col items-center justify-center min-h-screen bg-[#1c1d22] text-white font-sans overflow-hidden">
+        <div className="absolute top-4 right-4 z-50">
+          <button
+            onClick={handleInstallClick}
+            className="text-xs font-medium px-3 py-2 bg-emerald-500/10 hover:bg-emerald-500/20 border border-emerald-500/20 transition-colors rounded-md text-emerald-400 flex items-center gap-2 shadow-lg"
+          >
+            <Download size={14} />
+            Download App
+          </button>
+        </div>
         <motion.div
           initial={{ opacity: 0, y: -20 }}
           animate={{ opacity: 1, y: 0 }}
@@ -1025,6 +1061,13 @@ export default function App() {
             REVIN
           </div>
           <div className="flex items-center gap-2">
+            <button
+              onClick={handleInstallClick}
+              className="text-xs font-medium px-2.5 py-1.5 bg-emerald-500/10 hover:bg-emerald-500/20 border border-emerald-500/20 transition-colors rounded-md text-emerald-400 flex items-center gap-1"
+            >
+              <Download size={12} />
+              <span className="hidden sm:inline">Download App</span>
+            </button>
             <button
               onClick={() => setIsMobileWorkspaceOpen(true)}
               className="md:hidden text-xs font-semibold px-3 py-1.5 bg-emerald-500/10 text-emerald-400 hover:bg-emerald-500/20 transition-colors rounded-md"
