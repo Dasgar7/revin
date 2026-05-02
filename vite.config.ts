@@ -15,9 +15,14 @@ export default defineConfig(({mode}) => {
         devOptions: {
           enabled: true
         },
+        workbox: {
+          globPatterns: ['**/*.{js,css,html,ico,png,svg}'],
+          navigateFallback: '/index.html',
+        },
         manifest: {
-          name: "Revin AI Coder",
+          name: "Revin AI",
           short_name: "Revin",
+          description: "Revin AI Coding Assistant",
           theme_color: "#1c1d22",
           background_color: "#1c1d22",
           display: "standalone",
@@ -28,13 +33,25 @@ export default defineConfig(({mode}) => {
               src: "/icon.svg",
               sizes: "192x192",
               type: "image/svg+xml",
-              purpose: "any maskable"
+              purpose: "any"
             },
             {
               src: "/icon.svg",
               sizes: "512x512",
               type: "image/svg+xml",
-              purpose: "any maskable"
+              purpose: "any"
+            },
+            {
+              src: "/icon.svg",
+              sizes: "192x192",
+              type: "image/svg+xml",
+              purpose: "maskable"
+            },
+            {
+              src: "/icon.svg",
+              sizes: "512x512",
+              type: "image/svg+xml",
+              purpose: "maskable"
             }
           ]
         }
