@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect, useMemo } from "react";
-import { motion } from "motion/react";
+import { motion, AnimatePresence } from "motion/react";
 import {
   Terminal,
   Code2,
@@ -15,6 +15,12 @@ import {
   Loader,
   ArrowUp,
   Mic,
+  Phone,
+  PhoneOff,
+  MicOff,
+  MessageSquare,
+  Volume2,
+  VolumeX,
 } from "lucide-react";
 import Markdown from "react-markdown";
 import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
@@ -29,7 +35,7 @@ import {
 } from "@codesandbox/sandpack-react";
 import JSZip from "jszip";
 import { saveAs } from "file-saver";
-import { vibeCodeStream, fixTranscriptText } from "./services/geminiService";
+import { vibeCodeStream, transcribeAudio } from "./services/geminiService";
 
 interface Message {
   id: string;
@@ -68,6 +74,9 @@ function parseContent(text: string) {
     } else if (lang === "json") {
       filename = "package.json";
     }
+
+    // Always map src/App.tsx to App.tsx since Sandpack react-ts template uses /App.tsx as entry
+    filename = filename.replace(/^\/?src\//, "");
 
     blocks.push({
       language: lang,
@@ -350,71 +359,65 @@ export default function App() {
   const [input, setInput] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [isRecording, setIsRecording] = useState(false);
-  const recognitionRef = useRef<any>(null);
-  const isFixingTranscriptRef = useRef(false);
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const audioChunksRef = useRef<BlobPart[]>([]);
+  const isTranscribingRef = useRef(false);
 
   useEffect(() => {
-    if (typeof window !== "undefined") {
-      const SpeechRecognition =
-        (window as any).SpeechRecognition ||
-        (window as any).webkitSpeechRecognition;
-      if (SpeechRecognition) {
-        recognitionRef.current = new SpeechRecognition();
-        recognitionRef.current.continuous = true;
-        recognitionRef.current.interimResults = true;
-
-        recognitionRef.current.onresult = (event: any) => {
-          let currentTranscript = "";
-          for (let i = 0; i < event.results.length; i++) {
-            currentTranscript += event.results[i][0].transcript;
-          }
-          setInput(currentTranscript);
-        };
-
-        recognitionRef.current.onerror = (event: any) => {
-          console.error("Speech recognition error", event.error);
-          if (event.error === 'not-allowed') {
-            alert('Microphone access was denied. Please allow microphone access in your browser settings to use voice input.');
-          }
-          setIsRecording(false);
-        };
+    // Cleanup on unmount
+    return () => {
+      if (mediaRecorderRef.current && mediaRecorderRef.current.state === "recording") {
+        mediaRecorderRef.current.stop();
       }
-    }
+    };
   }, []);
 
   const toggleRecording = async () => {
-    if (isFixingTranscriptRef.current) return;
+    if (isTranscribingRef.current) return;
 
     if (isRecording) {
-      if (recognitionRef.current) {
-        recognitionRef.current.stop();
+      if (mediaRecorderRef.current && mediaRecorderRef.current.state === "recording") {
+        mediaRecorderRef.current.stop();
       }
       setIsRecording(false);
-      
-      if (input.trim()) {
-        isFixingTranscriptRef.current = true;
-        try {
-          setIsLoading(true);
-          const fixedText = await fixTranscriptText(input);
-          setInput(fixedText);
-        } catch (err) {
-          console.error("Failed to fix transcript", err);
-        } finally {
-          setIsLoading(false);
-          isFixingTranscriptRef.current = false;
-        }
-      }
     } else {
-      if (recognitionRef.current) {
-        try {
-          recognitionRef.current.start();
-          setIsRecording(true);
-          setInput("");
-        } catch (e) {
-          console.error(e);
-        }
-      } else {
-        alert("Speech recognition is not supported in this browser.");
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        const mediaRecorder = new MediaRecorder(stream);
+        mediaRecorderRef.current = mediaRecorder;
+        audioChunksRef.current = [];
+
+        mediaRecorder.ondataavailable = (event) => {
+          if (event.data.size > 0) {
+            audioChunksRef.current.push(event.data);
+          }
+        };
+
+        mediaRecorder.onstop = async () => {
+          stream.getTracks().forEach(track => track.stop());
+          const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/webm' });
+          
+          if (audioBlob.size > 0) {
+            isTranscribingRef.current = true;
+            setIsLoading(true);
+            try {
+              const text = await transcribeAudio(audioBlob);
+              setInput((prev) => (prev ? prev + " " + text : text));
+            } catch (err) {
+              console.error("Failed to transcribe audio", err);
+              alert("Failed to transcribe audio. Please try again.");
+            } finally {
+              setIsLoading(false);
+              isTranscribingRef.current = false;
+            }
+          }
+        };
+
+        mediaRecorder.start();
+        setIsRecording(true);
+      } catch (err) {
+        console.error("Microphone access error:", err);
+        alert("Microphone access was denied. Please allow microphone access in your browser settings.");
       }
     }
   };
@@ -423,6 +426,168 @@ export default function App() {
   const [expandedThoughts, setExpandedThoughts] = useState<
     Record<string, boolean>
   >({});
+
+  const [isCalling, setIsCalling] = useState(false);
+  const [callState, setCallState] = useState<"idle" | "listening" | "thinking" | "speaking">("idle");
+  const [isMicMuted, setIsMicMuted] = useState(false);
+  const [isAIMuted, setIsAIMuted] = useState(false);
+  const [showMessagesInCall, setShowMessagesInCall] = useState(false);
+
+  const recognitionRef = useRef<any>(null);
+  const isCallingRef = useRef(false);
+  const callStateRef = useRef(callState);
+  const isMicMutedRef = useRef(isMicMuted);
+  const isAIMutedRef = useRef(isAIMuted);
+
+  useEffect(() => { isCallingRef.current = isCalling; }, [isCalling]);
+  useEffect(() => { callStateRef.current = callState; }, [callState]);
+  useEffect(() => { isMicMutedRef.current = isMicMuted; }, [isMicMuted]);
+  useEffect(() => { isAIMutedRef.current = isAIMuted; }, [isAIMuted]);
+
+  const startListening = () => {
+    if (isMicMutedRef.current || !isCallingRef.current) return;
+    try {
+      if (!recognitionRef.current) {
+        const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+        if (!SpeechRecognition) {
+          alert("Speech recognition is not supported in this browser. Please use Chrome/Edge.");
+          setIsCalling(false);
+          return;
+        }
+        recognitionRef.current = new SpeechRecognition();
+        recognitionRef.current.continuous = true;
+        recognitionRef.current.interimResults = false;
+        
+        recognitionRef.current.onresult = (event: any) => {
+          let finalTranscript = '';
+          for (let i = event.resultIndex; i < event.results.length; ++i) {
+            if (event.results[i].isFinal) {
+              finalTranscript += event.results[i][0].transcript;
+            }
+          }
+          if (finalTranscript.trim() && isCallingRef.current) {
+            stopListening();
+            submitMessage(finalTranscript);
+          }
+        };
+
+        recognitionRef.current.onend = () => {
+          if (isCallingRef.current && callStateRef.current === "listening" && !isMicMutedRef.current) {
+            try { recognitionRef.current.start(); } catch(e) {}
+          }
+        };
+      }
+      recognitionRef.current.start();
+    } catch (err) {}
+  };
+
+  const stopListening = () => {
+    if (recognitionRef.current) {
+      try { recognitionRef.current.stop(); } catch(e) {}
+    }
+  };
+
+  const startCall = () => {
+    setIsCalling(true);
+    setCallState("listening");
+    setShowMessagesInCall(false);
+    startListening();
+  };
+
+  const endCall = () => {
+    setIsCalling(false);
+    setCallState("idle");
+    stopListening();
+    window.speechSynthesis.cancel();
+  };
+
+  const toggleMicOption = () => {
+    setIsMicMuted((prev) => {
+      const next = !prev;
+      if (next) {
+        stopListening();
+      } else if (isCalling && callState === "listening") {
+        try { recognitionRef.current?.start(); } catch(e) {}
+      }
+      return next;
+    });
+  };
+
+  const toggleAIMuteOption = () => {
+    setIsAIMuted((prev) => {
+      const next = !prev;
+      if (next) window.speechSynthesis.cancel();
+      return next;
+    });
+  };
+
+  const readAloud = (text: string) => {
+    if (!isCallingRef.current || isAIMutedRef.current) {
+      if (isCallingRef.current) {
+        setCallState("listening");
+        startListening();
+      }
+      return;
+    }
+    
+    setCallState("speaking");
+    const synth = window.speechSynthesis;
+    synth.cancel();
+    
+    // strip markdown wrappers
+    let displayContent = text
+        .replace(/<think>[\s\S]*?<\/think>/g, "")
+        .replace(/```[\s\S]*?```/g, " I have updated the code. ")
+        .replace(/#/g, "")
+        .replace(/\*/g, "")
+        .trim();
+        
+    if (!displayContent) {
+      setCallState("listening");
+      startListening();
+      return;
+    }
+    
+    const utterance = new SpeechSynthesisUtterance(displayContent);
+    utterance.volume = 1;
+    utterance.rate = 1;
+    utterance.pitch = 0.85; // slightly deeper pitch for a more professional tone
+    
+    // Attempt to use a better quality English male voice if available
+    const voices = synth.getVoices();
+    const preferredVoices = [
+      "Google UK English Male",
+      "Microsoft Mark",
+      "Microsoft David",
+      "Daniel", // macOS UK Male
+      "Alex",   // macOS US Male
+    ];
+    
+    let selectedVoice = null;
+    for (const name of preferredVoices) {
+      selectedVoice = voices.find(v => v.name.includes(name));
+      if (selectedVoice) break;
+    }
+    
+    if (!selectedVoice) {
+      selectedVoice = voices.find(v => v.lang.startsWith("en") && v.name.toLowerCase().includes("male"));
+    }
+    
+    if (!selectedVoice) {
+      selectedVoice = voices.find(v => v.lang.startsWith("en"));
+    }
+
+    if (selectedVoice) utterance.voice = selectedVoice;
+    
+    utterance.onend = () => {
+      if (isCallingRef.current) {
+        setCallState("listening");
+        startListening();
+      }
+    };
+    synth.speak(utterance);
+  };
+
 
   const [debouncedMessages, setDebouncedMessages] = useState<Message[]>([]);
 
@@ -455,6 +620,10 @@ export default function App() {
 
   const submitMessage = async (text: string) => {
     if (!text.trim() || isLoading) return;
+
+    if (isCallingRef.current) {
+        setCallState("thinking");
+    }
 
     const userMessage: Message = {
       id: Date.now().toString(),
@@ -496,6 +665,10 @@ export default function App() {
       }
       // Collapse thought when finished
       setExpandedThoughts((prev) => ({ ...prev, [modelMessageId]: false }));
+
+      if (isCallingRef.current) {
+        readAloud(fullResponse);
+      }
     } catch (error) {
       console.error("Error generating response:", error);
       setMessages((prev) => [
@@ -596,6 +769,93 @@ export default function App() {
   const sandpackCustomSetup = useMemo(() => ({
     dependencies: dynamicDependencies
   }), [dynamicDependencies]);
+
+  const renderCallUI = () => {
+    if (!isCalling) return null;
+
+    return (
+      <AnimatePresence>
+        {showMessagesInCall ? (
+          <div className="absolute top-14 left-0 right-0 p-3 z-30">
+            <div className="bg-emerald-500/10 border border-emerald-500/20 backdrop-blur-md rounded-xl p-3 flex justify-between items-center shadow-lg">
+              <div className="flex items-center gap-3">
+                <div className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+                <span className="text-emerald-400 font-medium text-sm">Active Call</span>
+              </div>
+              <div className="flex gap-2">
+                <button type="button" onClick={() => setShowMessagesInCall(false)} className="px-3 py-1.5 rounded-lg bg-emerald-500/20 text-emerald-400 text-xs font-semibold hover:bg-emerald-500/30 transition-colors">
+                  Return
+                </button>
+                <button type="button" onClick={endCall} className="p-1.5 rounded-lg bg-red-500/20 text-red-400 hover:bg-red-500/30 transition-colors">
+                  <PhoneOff size={16}/>
+                </button>
+              </div>
+            </div>
+          </div>
+        ) : (
+          <motion.div 
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: 20 }}
+            className="fixed inset-0 bg-[#1c1d22] z-50 flex flex-col items-center justify-between py-12 px-6"
+          >
+            {/* Top controls */}
+            <div className="w-full max-w-4xl flex justify-between items-start px-6 pt-6">
+               <button 
+                type="button" 
+                onClick={() => setShowMessagesInCall(true)} 
+                className="flex items-center gap-2 text-gray-400 hover:text-white px-4 py-2 bg-white/5 hover:bg-white/10 rounded-full transition-colors"
+               >
+                <MessageSquare size={18}/>
+                <span className="text-sm font-medium">Chat</span>
+               </button>
+
+               <button 
+                type="button" 
+                onClick={() => {
+                  setIsMobileWorkspaceOpen(true);
+                  setShowMessagesInCall(true);
+                }} 
+                className="md:hidden flex items-center gap-2 text-gray-400 hover:text-white px-4 py-2 bg-white/5 hover:bg-white/10 rounded-full transition-colors"
+               >
+                <span className="text-sm font-medium">Workspace</span>
+                <Layout size={18}/>
+               </button>
+            </div>
+
+            <div className="flex-1 flex flex-col items-center justify-center w-full">
+                <div className={`w-32 h-32 rounded-full flex items-center justify-center relative transition-all duration-500 ${callState === 'speaking' ? 'bg-emerald-500/20 shadow-[0_0_50px_rgba(16,185,129,0.3)] shadow-emerald-500/50' : 'bg-[#2b2d31]'}`}>
+                    {callState === 'listening' && <div className="absolute inset-0 rounded-full border-2 border-emerald-500/50 animate-ping" />}
+                    {callState === 'thinking' && <Loader className="absolute text-emerald-500 animate-spin" size={40} />}
+                    <span className="text-4xl font-bold text-white tracking-widest">R</span>
+                </div>
+                
+                <div className="mt-12 text-center">
+                    <h2 className="text-xl font-medium text-gray-200">
+                        {callState === 'listening' ? (isMicMuted ? "Microphone off" : "Listening...") :
+                          callState === 'thinking' ? "Thinking..." :
+                          callState === 'speaking' ? "Revin is speaking" : "Call starting..."}
+                    </h2>
+                </div>
+            </div>
+            
+            {/* Controls */}
+            <div className="flex items-center gap-6 mt-12 bg-[#2b2d31] p-4 rounded-3xl border border-white/5">
+                <button type="button" onClick={toggleAIMuteOption} className={`w-14 h-14 rounded-full flex items-center justify-center transition-all ${isAIMuted ? 'bg-orange-500/20 text-orange-400' : 'bg-white/5 hover:bg-white/10 text-gray-200'}`}>
+                    {isAIMuted ? <VolumeX size={24}/> : <Volume2 size={24}/>}
+                </button>
+                <button type="button" onClick={toggleMicOption} className={`w-14 h-14 rounded-full flex items-center justify-center transition-all ${isMicMuted ? 'bg-orange-500/20 text-orange-400' : 'bg-white/5 hover:bg-white/10 text-gray-200'}`}>
+                    {isMicMuted ? <MicOff size={24}/> : <Mic size={24}/>}
+                </button>
+                <button type="button" onClick={endCall} className="w-14 h-14 rounded-full flex items-center justify-center bg-red-500 hover:bg-red-400 text-white shadow-lg transition-transform hover:scale-105">
+                    <PhoneOff size={24}/>
+                </button>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+    );
+  };
 
   const renderModals = () => (
     <>
@@ -724,27 +984,41 @@ export default function App() {
                   >
                     <Mic size={20} className={isRecording ? "text-white" : "text-gray-400"} />
                   </button>
-                  <button
-                    type="submit"
-                    disabled={!input.trim()}
-                    className="w-10 h-10 rounded-full bg-white flex items-center justify-center hover:bg-gray-200 transition-colors shrink-0 disabled:opacity-50 disabled:cursor-not-allowed"
-                  >
-                    <ArrowUp size={20} className="text-black" />
-                  </button>
+                  {input.trim() ? (
+                    <button
+                      type="submit"
+                      disabled={isLoading || isRecording}
+                      className="w-10 h-10 rounded-full bg-white flex items-center justify-center hover:bg-gray-200 transition-colors shrink-0 disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                      <ArrowUp size={20} className="text-black" />
+                    </button>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={startCall}
+                      className="w-10 h-10 rounded-full bg-emerald-500 flex items-center justify-center hover:bg-emerald-400 transition-colors shrink-0 shadow-lg shadow-emerald-500/20"
+                    >
+                      <Phone size={18} className="text-white fill-current" />
+                    </button>
+                  )}
                 </div>
               </div>
             </form>
           </div>
         </motion.div>
         {renderModals()}
+        {renderCallUI()}
       </div>
     );
   }
 
   return (
-    <div className="flex flex-col md:flex-row h-screen bg-[#1c1d22] text-gray-200 overflow-hidden font-sans selection:bg-emerald-500/30">
+    <div className="flex flex-col md:flex-row h-[100dvh] bg-[#1c1d22] text-gray-200 overflow-hidden font-sans selection:bg-emerald-500/30">
       {/* Sidebar / Chat Area */}
-      <div className={`w-full md:w-[320px] lg:w-[450px] flex-col bg-[#232428] shrink-0 z-20 shadow-xl h-full border-r border-[#2b2d31] ${isMobileWorkspaceOpen ? 'hidden md:flex' : 'flex'}`}>
+      <div className={`w-full md:w-[320px] lg:w-[450px] flex-col bg-[#232428] shrink-0 z-20 shadow-xl h-full border-r border-[#2b2d31] relative ${isMobileWorkspaceOpen ? 'hidden md:flex' : 'flex'}`}>
+        
+        {renderCallUI()}
+
         {/* Header */}
         <div className="h-14 flex items-center px-4 md:px-6 shrink-0 justify-between shadow-sm">
           <div className="flex items-center gap-2 text-white font-bold tracking-widest text-lg">
@@ -957,13 +1231,23 @@ export default function App() {
                 >
                   <Mic size={18} className={isRecording ? "text-white" : "text-gray-400"} />
                 </button>
-                <button
-                  type="submit"
-                  disabled={!input.trim()}
-                  className="w-9 h-9 rounded-full bg-white flex items-center justify-center hover:bg-gray-200 transition-colors shrink-0 disabled:opacity-50 disabled:cursor-not-allowed"
-                >
-                  <ArrowUp size={18} className="text-black" />
-                </button>
+                {input.trim() ? (
+                  <button
+                    type="submit"
+                    disabled={isLoading || isRecording}
+                    className="w-9 h-9 rounded-full bg-white flex items-center justify-center hover:bg-gray-200 transition-colors shrink-0 disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    <ArrowUp size={18} className="text-black" />
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={startCall}
+                    className="w-9 h-9 rounded-full bg-emerald-500 flex items-center justify-center hover:bg-emerald-400 transition-colors shrink-0 shadow-lg shadow-emerald-500/20"
+                  >
+                    <Phone size={16} className="text-white fill-current" />
+                  </button>
+                )}
               </div>
             </div>
           </form>
