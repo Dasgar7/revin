@@ -1,12 +1,13 @@
 export async function* vibeCodeStream(
   prompt: string,
-  history: { role: 'user' | 'model'; text: string }[],
-  isCustomThemeMode: boolean = false
+  history: { role: 'user' | 'model'; text: string; attachments?: any[] }[],
+  isCustomThemeMode: boolean = false,
+  attachments?: any[]
 ) {
   const response = await fetch('/api/vibe-code', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ prompt, history, isCustomThemeMode }),
+    body: JSON.stringify({ prompt, history, isCustomThemeMode, attachments }),
   });
 
   if (!response.ok || !response.body) {

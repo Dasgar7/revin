@@ -7,7 +7,7 @@ const app = express();
 app.use(express.json({ limit: "50mb" }));
 
 app.post("/api/vibe-code", async (req, res) => {
-    const { prompt, history, isCustomThemeMode } = req.body;
+    const { prompt, history, isCustomThemeMode, attachments } = req.body;
 
     const systemInstruction = isCustomThemeMode
       ? "You are Revin, an elite AI web developer. The user has requested a custom theme generation. Your goal is ONLY to generate the color palette of the theme.\n\nCRITICAL RULES:\n1. Wrap your thoughts in <think> ... </think> tags BEFORE writing any code.\n2. Provide the code in a single markdown block with // file: App.tsx at the top.\n3. DO NOT build a full UI, functional app, or complex layout. Your code MUST ONLY be a simple, minimalist React component that displays the generated color palette (e.g., color swatches with hex codes).\n4. The interface should just be a presentation of the colors, using Tailwind CSS inline classes to set the background colors of the swatches.\n5. Output an engaging chat reply alongside the thought and code blocks."
@@ -20,13 +20,31 @@ app.post("/api/vibe-code", async (req, res) => {
     });
 
     try {
+      const mapMessageOpenAI = (msg: any) => {
+        let content: any = msg.text || "";
+        if (msg.attachments && msg.attachments.length > 0) {
+          content = [];
+          if (msg.text) content.push({ type: "text", text: msg.text });
+          for (const att of msg.attachments) {
+            if (att.mimeType.startsWith("image/")) {
+              content.push({ type: "image_url", image_url: { url: att.url } });
+            }
+          }
+        }
+        return {
+          role: msg.role === "model" ? "assistant" : "user",
+          content,
+        };
+      };
+
+      const baseMessages = [
+        ...history.map(mapMessageOpenAI),
+        mapMessageOpenAI({ role: "user", text: prompt, attachments })
+      ];
+
       const messages = [
         { role: "system", content: systemInstruction },
-        ...history.map((msg: any) => ({
-            role: msg.role === "model" ? "assistant" : "user",
-            content: msg.text
-        })),
-        { role: "user", content: prompt }
+        ...baseMessages
       ];
 
       const providers = [
@@ -73,10 +91,22 @@ app.post("/api/vibe-code", async (req, res) => {
         if (!key) throw new Error("No API key available across all providers");
         
         const ai = new GoogleGenAI({ apiKey: key });
-        const contents = [...history, { role: "user", text: prompt }].map((msg: any) => ({
-            role: msg.role === 'model' ? 'model' : 'user',
-            parts: [{ text: msg.text }],
-        }));
+        const contents = [...history, { role: "user", text: prompt, attachments }].map((msg: any) => {
+            const parts: any[] = [];
+            if (msg.text) parts.push({ text: msg.text });
+            if (msg.attachments && msg.attachments.length > 0) {
+               for (const att of msg.attachments) {
+                  const base64Data = att.url.split(',')[1];
+                  parts.push({ inlineData: { data: base64Data, mimeType: att.mimeType } });
+               }
+            }
+            if (parts.length === 0) parts.push({ text: "" });
+            
+            return {
+                role: msg.role === 'model' ? 'model' : 'user',
+                parts,
+            };
+        });
 
         const responseStream = await ai.models.generateContentStream({
             model: 'gemini-2.5-pro',

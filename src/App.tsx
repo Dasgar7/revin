@@ -37,10 +37,17 @@ import JSZip from "jszip";
 import { saveAs } from "file-saver";
 import { vibeCodeStream, transcribeAudio } from "./services/geminiService";
 
+interface Attachment {
+  url: string;
+  mimeType: string;
+  name: string;
+}
+
 interface Message {
   id: string;
   role: "user" | "model";
   content: string;
+  attachments?: Attachment[];
 }
 
 function parseContent(text: string) {
@@ -613,6 +620,27 @@ export default function App() {
   const [isTemplateModalOpen, setIsTemplateModalOpen] = useState(false);
   const [appMode, setAppMode] = useState<"normal" | "custom_theme">("normal");
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const [attachments, setAttachments] = useState<Attachment[]>([]);
+
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files;
+    if (!files) return;
+
+    Array.from(files).forEach((file) => {
+      const reader = new FileReader();
+      reader.onload = (event) => {
+        if (event.target?.result && typeof event.target.result === "string") {
+          setAttachments(prev => [...prev, { 
+            url: event.target!.result as string, 
+            mimeType: file.type, 
+            name: file.name 
+          }]);
+        }
+      };
+      reader.readAsDataURL(file);
+    });
+    e.target.value = '';
+  };
   
   const [sandpackLastError, setSandpackLastError] = useState<string | null>(null);
 
@@ -633,16 +661,21 @@ export default function App() {
   };
 
   const submitMessage = async (text: string) => {
-    if (!text.trim() || isLoading) return;
+    if (!text.trim() && attachments.length === 0) return;
+    if (isLoading) return;
 
     if (isCallingRef.current) {
         setCallState("thinking");
     }
 
+    const currentAttachments = [...attachments];
+    setAttachments([]);
+    
     const userMessage: Message = {
       id: Date.now().toString(),
       role: "user",
       content: text.trim(),
+      attachments: currentAttachments.length > 0 ? currentAttachments : undefined,
     };
     setMessages((prev) => [...prev, userMessage]);
     setInput("");
@@ -664,9 +697,9 @@ export default function App() {
     try {
       const history = messages
         .filter((m) => m.id !== "welcome")
-        .map((m) => ({ role: m.role, text: m.content }));
+        .map((m) => ({ role: m.role, text: m.content, attachments: m.attachments }));
 
-      const stream = vibeCodeStream(userMessage.content, history, appMode === "custom_theme");
+      const stream = vibeCodeStream(userMessage.content, history, appMode === "custom_theme", currentAttachments);
 
       let fullResponse = "";
       for await (const chunk of stream) {
@@ -926,7 +959,7 @@ export default function App() {
       )}
 
       {/* Hidden file input */}
-      <input type="file" ref={fileInputRef} className="hidden" />
+      <input type="file" ref={fileInputRef} className="hidden" multiple onChange={handleFileChange} accept="image/*" />
     </>
   );
 
@@ -973,6 +1006,28 @@ export default function App() {
               </div>
             )}
             <form onSubmit={handleSubmit} className="flex flex-col">
+              {attachments.length > 0 && (
+                <div className="flex flex-wrap gap-2 px-4 pt-4">
+                  {attachments.map((att, idx) => (
+                    <div key={idx} className="relative group rounded-md border border-white/10 overflow-hidden bg-white/5 flex items-center justify-center min-w-[60px] min-h-[60px]">
+                      {att.mimeType.startsWith('image/') ? (
+                        <img src={att.url} alt={att.name} className="h-16 w-auto object-cover" />
+                      ) : (
+                        <div className="text-xs p-2 max-w-[100px] truncate text-gray-400">
+                          {att.name}
+                        </div>
+                      )}
+                      <button
+                        type="button"
+                        onClick={() => setAttachments(prev => prev.filter((_, i) => i !== idx))}
+                        className="absolute -top-1 -right-1 bg-red-500 rounded-full text-white p-0.5 opacity-0 group-hover:opacity-100 transition-opacity"
+                      >
+                        <X size={12} />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
               <textarea
                 value={input}
                 onChange={(e) => setInput(e.target.value)}
@@ -1101,8 +1156,23 @@ export default function App() {
                   className={`flex flex-col text-[14px] leading-relaxed ${message.role === "user" ? "items-end" : "items-start"}`}
                 >
                   {message.role === "user" ? (
-                    <div className="max-w-[85%] bg-[#383a40] text-[#e8e9ea] px-4 py-2.5 rounded-2xl rounded-tr-sm shadow-sm">
-                      {message.content}
+                    <div className="max-w-[85%] bg-[#383a40] text-[#e8e9ea] px-4 py-2.5 rounded-2xl rounded-tr-sm shadow-sm flex flex-col gap-2">
+                      {message.attachments && message.attachments.length > 0 && (
+                        <div className="flex flex-wrap gap-2">
+                          {message.attachments.map((att, idx) => (
+                            <div key={idx} className="rounded border border-white/10 overflow-hidden bg-white/5 flex items-center justify-center">
+                              {att.mimeType.startsWith('image/') ? (
+                                <img src={att.url} alt={att.name} className="max-h-32 w-auto object-contain" />
+                              ) : (
+                                <div className="text-xs p-2 max-w-[150px] truncate">
+                                  {att.name}
+                                </div>
+                              )}
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                      <div>{message.content}</div>
                     </div>
                   ) : (
                     <div className="w-full flex gap-3">
@@ -1226,6 +1296,28 @@ export default function App() {
             onSubmit={handleSubmit}
             className="relative flex flex-col bg-[#2b2d31] rounded-xl border border-white/5 focus-within:border-emerald-500/30 transition-all shadow-md"
           >
+            {attachments.length > 0 && (
+              <div className="flex flex-wrap gap-2 px-4 pt-3">
+                {attachments.map((att, idx) => (
+                  <div key={idx} className="relative group rounded-md border border-white/10 overflow-hidden bg-white/5 flex items-center justify-center min-w-[50px] min-h-[50px]">
+                    {att.mimeType.startsWith('image/') ? (
+                      <img src={att.url} alt={att.name} className="h-12 w-auto object-cover" />
+                    ) : (
+                      <div className="text-[10px] p-2 max-w-[80px] truncate text-gray-400">
+                        {att.name}
+                      </div>
+                    )}
+                    <button
+                      type="button"
+                      onClick={() => setAttachments(prev => prev.filter((_, i) => i !== idx))}
+                      className="absolute -top-1 -right-1 bg-red-500 rounded-full text-white p-0.5 opacity-0 group-hover:opacity-100 transition-opacity"
+                    >
+                      <X size={10} />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
             <textarea
               value={input}
               onChange={(e) => setInput(e.target.value)}
