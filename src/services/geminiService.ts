@@ -17,13 +17,15 @@ export async function* vibeCodeStream(
   const reader = response.body.getReader();
   const decoder = new TextDecoder('utf-8');
   let done = false;
+  let buffer = '';
 
   while (!done) {
     const { value, done: readerDone } = await reader.read();
     done = readerDone;
     if (value) {
-      const chunk = decoder.decode(value, { stream: true });
-      const lines = chunk.split('\n\n');
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split('\n\n');
+      buffer = lines.pop() || '';
       for (const line of lines) {
         if (line.startsWith('data: ')) {
             const data = line.slice(6);
@@ -31,16 +33,20 @@ export async function* vibeCodeStream(
                 done = true;
                 break;
             }
+            let parsed;
             try {
-                const parsed = JSON.parse(data);
+                parsed = JSON.parse(data);
+            } catch (e) {
+                console.warn('Failed to parse streaming chunk', e, data);
+            }
+            
+            if (parsed) {
                 if (parsed.text) {
                     yield parsed.text;
                 }
                 if (parsed.error) {
-                    throw new Error(parsed.error);
+                    throw new Error(typeof parsed.error === 'string' ? parsed.error : JSON.stringify(parsed.error));
                 }
-            } catch (e) {
-                // ignore unparseable data
             }
         }
       }

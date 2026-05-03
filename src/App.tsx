@@ -92,12 +92,12 @@ function parseContent(text: string) {
     });
   }
 
-  const displayContent = text.replace(/<think>[\s\S]*?<\/think>/g, "").trim();
+  const displayContent = text.replace(/<think>[\s\S]*?(?:<\/think>|$)/g, "").trim();
 
   return {
     thinkContent: thinkContent || currentThinking,
     blocks,
-    displayContent,
+    displayContent: displayContent || (blocks.length > 0 ? "_Code updated in workspace._" : ""),
     isThinking,
   };
 }
@@ -627,22 +627,41 @@ export default function App() {
     if (!files) return;
 
     Array.from(files).forEach((file) => {
-      const reader = new FileReader();
-      reader.onload = (event) => {
-        if (event.target?.result && typeof event.target.result === "string") {
-          setAttachments(prev => [...prev, { 
-            url: event.target!.result as string, 
-            mimeType: file.type, 
-            name: file.name 
-          }]);
-        }
-      };
-      reader.readAsDataURL(file);
+      processFile(file);
     });
     e.target.value = '';
   };
+
+  const processFile = (file: File) => {
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      if (event.target?.result && typeof event.target.result === "string") {
+        setAttachments(prev => [...prev, { 
+          url: event.target!.result as string, 
+          mimeType: file.type, 
+          name: file.name 
+        }]);
+      }
+    };
+    reader.readAsDataURL(file);
+  };
+
+  const handlePaste = (e: React.ClipboardEvent) => {
+    const items = e.clipboardData?.items;
+    if (!items) return;
+
+    Array.from(items).forEach((item) => {
+      if (item.type.startsWith('image/')) {
+        const file = item.getAsFile();
+        if (file) {
+          processFile(file);
+        }
+      }
+    });
+  };
   
   const [sandpackLastError, setSandpackLastError] = useState<string | null>(null);
+  const [copiedMessageId, setCopiedMessageId] = useState<string | null>(null);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
@@ -716,17 +735,15 @@ export default function App() {
       if (isCallingRef.current) {
         readAloud(fullResponse);
       }
-    } catch (error) {
+    } catch (error: any) {
       console.error("Error generating response:", error);
-      setMessages((prev) => [
-        ...prev,
-        {
-          id: Date.now().toString(),
-          role: "model",
-          content:
-            "An error occurred. Please check your API key and try again.",
-        },
-      ]);
+      setMessages((prev) =>
+        prev.map((msg) =>
+          msg.id === modelMessageId
+            ? { ...msg, content: msg.content + `\n\n**An error occurred:** ${error.message}. Please try again.` }
+            : msg
+        )
+      );
     } finally {
       setIsLoading(false);
     }
@@ -741,7 +758,7 @@ export default function App() {
     if (sandpackLastError) {
       const errorMsg = sandpackLastError;
       setSandpackLastError(null);
-      submitMessage(`Fix this error:\n\`\`\`\n${errorMsg}\n\`\`\``);
+      submitMessage(`Fix this error:\n\`\`\`\n${errorMsg}\n\`\`\`\n\nHint: If the error says "Element type is invalid... but got: undefined", it almost certainly means you imported an icon from \`lucide-react\` that does not exist. (e.g. \`Gear\` does not exist, use \`Settings\`. \`PlusCircle\` does not exist, use \`CirclePlus\`). Double check your icon imports.`);
     }
   };
 
@@ -796,7 +813,7 @@ export default function App() {
 
   const dynamicDependencies = useMemo(() => {
     const deps: Record<string, string> = {
-      "lucide-react": "^0.263.1",
+      "lucide-react": "latest",
       "framer-motion": "^11.0.0",
       motion: "^10.16.2",
       recharts: "^2.12.0",
@@ -1031,6 +1048,7 @@ export default function App() {
               <textarea
                 value={input}
                 onChange={(e) => setInput(e.target.value)}
+                onPaste={handlePaste}
                 placeholder={appMode === "custom_theme" ? "Describe your custom theme..." : "Ask Revin to build a new app..."}
                 className="w-full bg-transparent text-[15px] resize-none outline-none px-4 py-4 min-h-[120px] placeholder-gray-500 font-sans"
                 onKeyDown={(e) => {
@@ -1156,23 +1174,52 @@ export default function App() {
                   className={`flex flex-col text-[14px] leading-relaxed ${message.role === "user" ? "items-end" : "items-start"}`}
                 >
                   {message.role === "user" ? (
-                    <div className="max-w-[85%] bg-[#383a40] text-[#e8e9ea] px-4 py-2.5 rounded-2xl rounded-tr-sm shadow-sm flex flex-col gap-2">
-                      {message.attachments && message.attachments.length > 0 && (
-                        <div className="flex flex-wrap gap-2">
-                          {message.attachments.map((att, idx) => (
-                            <div key={idx} className="rounded border border-white/10 overflow-hidden bg-white/5 flex items-center justify-center">
-                              {att.mimeType.startsWith('image/') ? (
-                                <img src={att.url} alt={att.name} className="max-h-32 w-auto object-contain" />
-                              ) : (
-                                <div className="text-xs p-2 max-w-[150px] truncate">
-                                  {att.name}
-                                </div>
-                              )}
-                            </div>
-                          ))}
-                        </div>
+                    <div className="max-w-[85%] flex flex-col items-end gap-1.5 group">
+                      <div className="bg-[#383a40] text-[#e8e9ea] px-4 py-2.5 rounded-2xl rounded-tr-sm shadow-sm flex flex-col gap-2 w-full">
+                        {message.attachments && message.attachments.length > 0 && (
+                          <div className="flex flex-wrap gap-2">
+                            {message.attachments.map((att, idx) => (
+                              <div key={idx} className="rounded border border-white/10 overflow-hidden bg-white/5 flex items-center justify-center">
+                                {att.mimeType.startsWith('image/') ? (
+                                  <img src={att.url} alt={att.name} className="max-h-32 w-auto object-contain" />
+                                ) : (
+                                  <div className="text-xs p-2 max-w-[150px] truncate">
+                                    {att.name}
+                                  </div>
+                                )}
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                        <div className="whitespace-pre-wrap">{message.content}</div>
+                      </div>
+                      
+                      {message.content && (
+                        <button
+                          onClick={() => {
+                            navigator.clipboard.writeText(message.content);
+                            setCopiedMessageId(message.id);
+                            setTimeout(() => setCopiedMessageId(null), 2000);
+                          }}
+                          className={`flex items-center gap-1.5 px-2 py-1 text-[10px] font-medium uppercase tracking-wider rounded transition-all ${
+                            copiedMessageId === message.id
+                              ? "text-emerald-400 opacity-100"
+                              : "text-gray-500 hover:text-gray-300 hover:bg-white/5 opacity-0 group-hover:opacity-100"
+                          }`}
+                        >
+                          {copiedMessageId === message.id ? (
+                            <>
+                              <Check size={12} />
+                              Copied
+                            </>
+                          ) : (
+                            <>
+                              <Copy size={12} />
+                              Copy
+                            </>
+                          )}
+                        </button>
                       )}
-                      <div>{message.content}</div>
                     </div>
                   ) : (
                     <div className="w-full flex gap-3">
@@ -1321,6 +1368,7 @@ export default function App() {
             <textarea
               value={input}
               onChange={(e) => setInput(e.target.value)}
+              onPaste={handlePaste}
               placeholder="Ask Revin to adjust..."
               className="w-full bg-transparent px-4 py-3 text-[14px] outline-none resize-none min-h-[50px] max-h-[200px]"
               rows={1}
