@@ -10,8 +10,8 @@ app.post("/api/vibe-code", async (req, res) => {
     const { prompt, history, isCustomThemeMode, attachments } = req.body;
 
     const systemInstruction = isCustomThemeMode
-      ? "You are Revin, an elite AI web developer. The user has requested a custom theme generation. Your goal is ONLY to generate the color palette of the theme.\n\nCRITICAL RULES:\n1. Wrap your thoughts in <think> ... </think> tags BEFORE writing any code.\n2. Provide the code in a single markdown block with // file: App.tsx at the top.\n3. DO NOT build a full UI, functional app, or complex layout. Your code MUST ONLY be a simple, minimalist React component that displays the generated color palette (e.g., color swatches with hex codes).\n4. The interface should just be a presentation of the colors, using Tailwind CSS inline classes to set the background colors of the swatches.\n5. Output an engaging chat reply alongside the thought and code blocks.\n6. ALWAYS export default your main component (e.g., export default function App)."
-      : "You are Revin, an elite AI web developer with a keen eye for modern, beautiful, and highly interactive UX/UI design. The user will ask you to build an application or website.\n\nYou must build a FULLY FUNCTIONAL, complete, and visually stunning React application.\n\nCRITICAL RULES:\n1. ABSOLUTELY NO CLI COMMANDS. Do NOT output `npm install`, `mkdir`, `npx create-react-app`, or any terminal commands.\n2. Environment: Sandpack React IDE. Pre-installed: react, framer-motion, lucide-react, tailwindcss. ALWAYS import icons from 'lucide-react'. NOTE: `lucide-react` does NOT have a `Gear` icon, use `Settings` instead. Invalid icons will cause `Element type is invalid: expected a string... but got: undefined` error.\n3. Wrap all planning inside <think> ... </think> tags BEFORE writing any code.\n4. Output EACH file in a separate markdown code block (e.g., ```tsx ... ```). The FIRST LINE of every code block MUST be the file path comment (e.g., // file: App.tsx). Do NOT put files in a src directory unless absolutely necessary, use the root path like App.tsx, styles.css, etc.\n5. You MUST provide a complete `App.tsx` file. Never use placeholders (like `// ... implement later`), write production-ready code. ALWAYS export default your main component (e.g., export default function App).\n6. DESIGN GUIDELINES: Use modern design trends (Glassmorphism, Bento grids, Neo-brutalism). Extensively use Tailwind for hover states, smooth transitions (`transition-all duration-300`), gradients, drop shadows, and responsive layouts. Include animations using `framer-motion` (staggered list animations, page transitions, micro-interactions). Ensure high color contrast, beautiful typography, proper padding/margins, and a polished, premium feel.";
+      ? "You are Revin, an elite AI web developer. The user has requested a custom theme generation. Your goal is ONLY to generate the color palette of the theme.\n\nCRITICAL RULES:\n1. Wrap your thoughts in <action type=\"Analyzing\">...</action> tags BEFORE writing any code.\n2. Provide the code in a single markdown block with // file: App.tsx at the top.\n3. DO NOT build a full UI, functional app, or complex layout. Your code MUST ONLY be a simple, minimalist React component that displays the generated color palette (e.g., color swatches with hex codes).\n4. The interface should just be a presentation of the colors, using Tailwind CSS inline classes to set the background colors of the swatches.\n5. Output an engaging chat reply alongside the action and code blocks.\n6. ALWAYS export default your main component (e.g., export default function App)."
+      : "You are Revin, an elite AI web developer with a keen eye for modern, beautiful, and highly interactive UX/UI design. The user will ask you to build an application or website.\n\nYou must build a FULLY FUNCTIONAL, complete, and visually stunning React application.\n\nCRITICAL RULES:\n1. ABSOLUTELY NO CLI COMMANDS. Do NOT output `npm install`, `mkdir`, `npx create-react-app`, or any terminal commands.\n2. Environment: Sandpack React IDE. Pre-installed: react, framer-motion, lucide-react, tailwindcss. ALWAYS import icons from 'lucide-react'. NOTE: `lucide-react` does NOT have a `Gear` icon, use `Settings` instead. Invalid icons will cause `Element type is invalid: expected a string... but got: undefined` error.\n3. You MUST think step-by-step using specific action blocks BEFORE your final code and response. Use these EXACT tags for your actions, one by one:\n  <action type=\"Analyzing\">...your analysis...</action>\n  <action type=\"Researching\" target=\"search topic or url\">...what you are searching for...</action>\n  <action type=\"Reading\" target=\"filename\">...what you are reading...</action>\n  <action type=\"Working\">...what you are building...</action>\nAfter closing all action tags, write your final response to the user and code blocks.\n4. Output EACH file in a separate markdown code block (e.g., ```tsx ... ```). The FIRST LINE of every code block MUST be the file path comment (e.g., // file: App.tsx). Do NOT put files in a src directory unless absolutely necessary, use the root path like App.tsx, styles.css, etc.\n5. You MUST provide a complete `App.tsx` file. Never use placeholders (like `// ... implement later`), write production-ready code. ALWAYS export default your main component (e.g., export default function App).\n6. DESIGN GUIDELINES: Use modern design trends (Glassmorphism, Bento grids, Neo-brutalism). Extensively use Tailwind for hover states, smooth transitions (`transition-all duration-300`), gradients, drop shadows, and responsive layouts. Include animations using `framer-motion` (staggered list animations, page transitions, micro-interactions). Ensure high color contrast, beautiful typography, proper padding/margins, and a polished, premium feel.";
 
     res.writeHead(200, {
       "Content-Type": "text/event-stream",
@@ -53,7 +53,7 @@ app.post("/api/vibe-code", async (req, res) => {
         { name: "Groq", key: process.env.GROQ_API_KEY, baseURL: "https://api.groq.com/openai/v1", model: "llama-3.3-70b-versatile", vision: false },
         { name: "OpenAI", key: process.env.OPENAI_API_KEY, baseURL: undefined, model: "gpt-4o", vision: true },
         { name: "Moonshot", key: process.env.MOONSHOOT_API_KEY, baseURL: "https://api.moonshot.cn/v1", model: "moonshot-v1-8k", vision: false },
-        { name: "GLM", key: process.env.GLM_API_KEY, baseURL: "https://open.bigmodel.cn/api/paas/v4", model: hasAttachments ? "glm-4v" : "glm-4", vision: true },
+        { name: "GLM", key: process.env.GLM_API_KEY, baseURL: "https://open.bigmodel.cn/api/paas/v4", model: hasAttachments ? "glm-4v-plus" : "glm-4-plus", vision: true },
         { name: "OpenRouter", key: process.env.OpenRouter_API_KEY, baseURL: "https://openrouter.ai/api/v1", model: "anthropic/claude-3.7-sonnet", vision: true },
         { name: "xAI", key: process.env.XAI_API_KEY, baseURL: "https://api.x.ai/v1", model: hasAttachments ? "grok-2-vision-1212" : "grok-2-latest", vision: true },
         { name: "DeepSeek", key: process.env.DEEPSEEK_API_KEY, baseURL: "https://api.deepseek.com", model: "deepseek-reasoner", vision: false }
@@ -69,10 +69,11 @@ app.post("/api/vibe-code", async (req, res) => {
             continue;
         }
         try {
-          const openai = new OpenAI({ baseURL: provider.baseURL, apiKey: provider.key });
+          const openai = new OpenAI({ baseURL: provider.baseURL, apiKey: provider.key, maxRetries: 0, timeout: 5000 });
           const completion = await openai.chat.completions.create({
             model: provider.model,
             messages,
+            max_tokens: 8192,
             stream: true,
           });
 
@@ -98,9 +99,9 @@ app.post("/api/vibe-code", async (req, res) => {
         const key = process.env.GEMINI_API_KEY || process.env.GEMINI_API_KEY2;
         if (!key) {
             if (providerErrors.length > 0) {
-                throw new Error("Configured API providers failed: " + providerErrors.join("; ") + ". Please check your API keys or configure a different one in Settings.");
+                throw new Error("All configured providers failed. " + providerErrors.join(" | ") + " | Gemini Fallback failed: No API key available.");
             }
-            throw new Error("No API key available across all providers. Please configure an API key (e.g. GROQ_API_KEY, OPENAI_API_KEY, DEEPSEEK_API_KEY, MOONSHOOT_API_KEY) in the AI Studio Settings menu to use this application.");
+            throw new Error("No API key available across all providers. Please configure an API key in the AI Studio Settings menu.");
         }
         
         const ai = new GoogleGenAI({ apiKey: key });
@@ -121,24 +122,42 @@ app.post("/api/vibe-code", async (req, res) => {
             };
         });
 
-        const responseStream = await ai.models.generateContentStream({
-            model: 'gemini-3.1-pro-preview',
-            contents: contents,
-            config: {
-                systemInstruction: systemInstruction,
-                temperature: 0.7,
-            },
-        });
+        try {
+            const responseStream = await ai.models.generateContentStream({
+                model: 'gemini-3.1-pro-preview',
+                contents: contents,
+                config: {
+                    systemInstruction: systemInstruction,
+                    temperature: 0.7,
+                    maxOutputTokens: 8192,
+                },
+            });
 
-        for await (const chunk of responseStream) {
-            if (chunk.text) {
-                res.write(`data: ${JSON.stringify({ text: chunk.text })}\n\n`);
+            for await (const chunk of responseStream) {
+                if (chunk.text) {
+                    res.write(`data: ${JSON.stringify({ text: chunk.text })}\n\n`);
+                }
+            }
+        } catch (geminiError: any) {
+            if (providerErrors.length > 0) {
+                throw new Error("All configured providers failed. " + providerErrors.join(" | ") + " | Gemini Fallback failed: " + geminiError.message);
+            } else {
+                throw geminiError;
             }
         }
       }
     } catch (e: any) {
       console.error(e);
-      res.write(`data: ${JSON.stringify({ error: e.message })}\n\n`);
+      let errorMsg = e.message;
+      if (errorMsg && errorMsg.includes('All configured providers failed')) {
+         // keep the full error message
+         errorMsg = errorMsg;
+      } else if (errorMsg && errorMsg.includes('API key not valid')) {
+        errorMsg = 'API key not valid. Please configure a valid Gemini API key in the AI Studio Settings menu.';
+      } else if (e.status === 429 || errorMsg.includes('429')) {
+         errorMsg = 'API Quota Exceeded. Please check your plan and billing details.';
+      }
+      res.write(`data: ${JSON.stringify({ error: errorMsg })}\n\n`);
     } finally {
       res.write(`data: [DONE]\n\n`);
       res.end();
@@ -157,6 +176,7 @@ app.post("/api/transcribe", async (req, res) => {
           const openai = new OpenAI({
               baseURL: "https://api.groq.com/openai/v1",
               apiKey: process.env.GROQ_API_KEY,
+              maxRetries: 0
           });
           const transcription = await openai.audio.transcriptions.create({
               file: file,
@@ -172,6 +192,7 @@ app.post("/api/transcribe", async (req, res) => {
         try {
           const openai = new OpenAI({
               apiKey: process.env.OPENAI_API_KEY,
+              maxRetries: 0
           });
           const transcription = await openai.audio.transcriptions.create({
               file: file,

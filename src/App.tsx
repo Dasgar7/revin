@@ -50,11 +50,30 @@ interface Message {
   attachments?: Attachment[];
 }
 
+export interface ActionBlock {
+  type: string;
+  target: string | null;
+  content: string;
+  status: "completed" | "in-progress";
+}
+
 function parseContent(text: string) {
   const thinkMatch = /<think>([\s\S]*?)<\/think>/.exec(text);
   const thinkContent = thinkMatch ? thinkMatch[1].trim() : null;
   const isThinking = text.includes("<think>") && !text.includes("</think>");
   const currentThinking = isThinking ? text.split("<think>")[1].trim() : null;
+
+  const actions: ActionBlock[] = [];
+  const actionRegex = /<action\s+type="([^"]+)"(?:\s+target="([^"]+)")?>([\s\S]*?)(?:<\/action>|$)/g;
+  let actionMatch;
+  while ((actionMatch = actionRegex.exec(text)) !== null) {
+      actions.push({
+          type: actionMatch[1],
+          target: actionMatch[2] || null,
+          content: actionMatch[3].trim(),
+          status: actionMatch[0].endsWith("</action>") ? "completed" : "in-progress"
+      });
+  }
 
   const codeRegex = /```(.*?)?\n([\s\S]*?)(?:```|$)/g;
   let matches;
@@ -92,14 +111,70 @@ function parseContent(text: string) {
     });
   }
 
-  const displayContent = text.replace(/<think>[\s\S]*?(?:<\/think>|$)/g, "").trim();
+  const displayContent = text
+    .replace(/<think>[\s\S]*?(?:<\/think>|$)/g, "")
+    .replace(/<action[\s\S]*?(?:<\/action>|$)/g, "")
+    .trim();
 
   return {
     thinkContent: thinkContent || currentThinking,
+    actions,
     blocks,
     displayContent: displayContent || (blocks.length > 0 ? "_Code updated in workspace._" : ""),
-    isThinking,
+    isThinking: isThinking || actions.some(a => a.status === "in-progress"),
   };
+}
+
+function WebSourcesDisplay({ actions }: { actions: ActionBlock[] }) {
+  const [isOpen, setIsOpen] = useState(false);
+  const webs = actions.filter((a) => a.type === "Researching" && a.target);
+
+  if (webs.length === 0) return null;
+
+  return (
+    <div className="mt-4 border-t border-white/5 pt-4">
+      {!isOpen ? (
+        <button
+          onClick={() => setIsOpen(true)}
+          className="flex items-center gap-2 text-xs text-gray-400 hover:text-gray-200 transition-colors"
+        >
+          <div className="flex -space-x-2">
+            {webs.slice(0, 3).map((w, i) => (
+              <div key={i} className="w-5 h-5 rounded-full bg-emerald-500/20 border border-[#232428] flex items-center justify-center text-[8px] text-emerald-400 font-bold uppercase overflow-hidden shrink-0">
+                {w.target?.charAt(0)}
+              </div>
+            ))}
+            {webs.length > 3 && (
+              <div className="w-5 h-5 rounded-full bg-white/10 border border-[#232428] flex items-center justify-center text-[8px] text-gray-400 font-bold shrink-0">
+                +{webs.length - 3}
+              </div>
+            )}
+          </div>
+          <span>Sources ({webs.length})</span>
+        </button>
+      ) : (
+        <div className="bg-black/20 rounded-xl border border-white/5 p-3 relative">
+          <button
+            onClick={() => setIsOpen(false)}
+            className="absolute top-3 right-3 text-gray-500 hover:text-gray-300"
+          >
+            <X size={14} />
+          </button>
+          <div className="text-xs font-medium text-gray-300 mb-3 px-1">Research Sources</div>
+          <div className="flex gap-2 p-1 overflow-x-auto pb-2 scrollbar-thin scrollbar-thumb-white/10 scrollbar-track-transparent">
+            {webs.map((w, i) => (
+              <div key={i} className="min-w-[140px] max-w-[180px] bg-[#2b2d31] rounded-lg p-3 border border-white/5 flex flex-col gap-1.5 shrink-0 group hover:border-emerald-500/30 transition-colors cursor-pointer">
+                <div className="text-[11px] text-gray-300 font-medium truncate group-hover:text-emerald-400 transition-colors">{w.target}</div>
+                <div className="text-[10px] text-gray-500 line-clamp-2 leading-relaxed">
+                  {w.content}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
 }
 
 function ThoughtDisplay({ content, isThinking }: { content: string, isThinking: boolean }) {
@@ -633,17 +708,55 @@ export default function App() {
   };
 
   const processFile = (file: File) => {
-    const reader = new FileReader();
-    reader.onload = (event) => {
-      if (event.target?.result && typeof event.target.result === "string") {
-        setAttachments(prev => [...prev, { 
-          url: event.target!.result as string, 
-          mimeType: file.type, 
-          name: file.name 
-        }]);
-      }
-    };
-    reader.readAsDataURL(file);
+    if (file.type.startsWith('image/')) {
+      const reader = new FileReader();
+      reader.onload = (event) => {
+        if (event.target?.result && typeof event.target.result === "string") {
+          const img = new Image();
+          img.onload = () => {
+            const canvas = document.createElement('canvas');
+            let width = img.width;
+            let height = img.height;
+            const maxDim = 1024;
+            if (width > maxDim || height > maxDim) {
+              if (width > height) {
+                height *= maxDim / width;
+                width = maxDim;
+              } else {
+                width *= maxDim / height;
+                height = maxDim;
+              }
+            }
+            canvas.width = width;
+            canvas.height = height;
+            const ctx = canvas.getContext('2d');
+            if (ctx) {
+               ctx.drawImage(img, 0, 0, width, height);
+               const compressedDataUrl = canvas.toDataURL('image/webp', 0.8);
+               setAttachments(prev => [...prev, { 
+                 url: compressedDataUrl, 
+                 mimeType: 'image/webp',
+                 name: file.name
+               }]);
+            }
+          };
+          img.src = event.target.result;
+        }
+      };
+      reader.readAsDataURL(file);
+    } else {
+      const reader = new FileReader();
+      reader.onload = (event) => {
+        if (event.target?.result && typeof event.target.result === "string") {
+          setAttachments(prev => [...prev, { 
+            url: event.target!.result as string, 
+            mimeType: file.type, 
+            name: file.name 
+          }]);
+        }
+      };
+      reader.readAsDataURL(file);
+    }
   };
 
   const handlePaste = (e: React.ClipboardEvent) => {
@@ -721,14 +834,28 @@ export default function App() {
       const stream = vibeCodeStream(userMessage.content, history, appMode === "custom_theme", currentAttachments);
 
       let fullResponse = "";
+      let lastUpdateTime = 0;
+      
       for await (const chunk of stream) {
         fullResponse += chunk;
-        setMessages((prev) =>
-          prev.map((msg) =>
-            msg.id === modelMessageId ? { ...msg, content: fullResponse } : msg,
-          ),
-        );
+        const now = Date.now();
+        // Update at most once every 100ms to prevent React re-render lag/crashes
+        if (now - lastUpdateTime > 100) {
+            setMessages((prev) =>
+              prev.map((msg) =>
+                msg.id === modelMessageId ? { ...msg, content: fullResponse } : msg,
+              ),
+            );
+            lastUpdateTime = now;
+        }
       }
+      
+      // Ensure the final state is committed
+      setMessages((prev) =>
+        prev.map((msg) =>
+          msg.id === modelMessageId ? { ...msg, content: fullResponse } : msg,
+        ),
+      );
       // Collapse thought when finished
       setExpandedThoughts((prev) => ({ ...prev, [modelMessageId]: false }));
 
@@ -737,10 +864,14 @@ export default function App() {
       }
     } catch (error: any) {
       console.error("Error generating response:", error);
+      let errorDisplay = error.message;
+      if (errorDisplay === "Failed to fetch" || errorDisplay?.toLowerCase().includes("network error")) {
+         errorDisplay = "Network timeout or connection error. Please try again with shorter input or check your API quotas.";
+      }
       setMessages((prev) =>
         prev.map((msg) =>
           msg.id === modelMessageId
-            ? { ...msg, content: msg.content + `\n\n**An error occurred:** ${error.message}. Please try again.` }
+            ? { ...msg, content: msg.content + `\n\n**An error occurred:** ${errorDisplay}. Please try again.` }
             : msg
         )
       );
@@ -901,10 +1032,34 @@ export default function App() {
             </div>
 
             <div className="flex-1 flex flex-col items-center justify-center w-full">
-                <div className={`w-32 h-32 rounded-full flex items-center justify-center relative transition-all duration-500 ${callState === 'speaking' ? 'bg-emerald-500/20 shadow-[0_0_50px_rgba(16,185,129,0.3)] shadow-emerald-500/50' : 'bg-[#2b2d31]'}`}>
+                <div className={`w-32 h-32 rounded-full flex items-center justify-center relative transition-all duration-500 overflow-hidden ${callState === 'speaking' ? 'bg-emerald-500/20 shadow-[0_0_50px_rgba(16,185,129,0.3)] shadow-emerald-500/50' : 'bg-[#2b2d31]'}`}>
                     {callState === 'listening' && <div className="absolute inset-0 rounded-full border-2 border-emerald-500/50 animate-ping" />}
                     {callState === 'thinking' && <Loader className="absolute text-emerald-500 animate-spin" size={40} />}
-                    <span className="text-4xl font-bold text-white tracking-widest">R</span>
+                    <AnimatePresence mode="wait">
+                      {callState === 'thinking' ? (
+                         <motion.div
+                           key="thinking"
+                           initial={{ opacity: 0, scale: 0.8, rotate: -20 }}
+                           animate={{ opacity: 1, scale: [1, 1.15, 1], rotate: [0, -15, 15, -15, 15, 0] }}
+                           exit={{ opacity: 0, scale: 0.8, rotate: 20 }}
+                           transition={{ duration: 2, repeat: Infinity, ease: "easeInOut" }}
+                           className="text-6xl absolute flex items-center justify-center w-full h-full"
+                         >
+                           🤔
+                         </motion.div>
+                      ) : (
+                         <motion.img
+                           key="idle"
+                           initial={{ opacity: 0, scale: 0.8 }}
+                           animate={{ opacity: 1, scale: 1 }}
+                           exit={{ opacity: 0, scale: 0.8 }}
+                           transition={{ duration: 0.4 }}
+                           src="/icon.svg" 
+                           alt="Revin" 
+                           className="w-full h-full object-cover absolute"
+                         />
+                      )}
+                    </AnimatePresence>
                 </div>
                 
                 <div className="mt-12 text-center">
@@ -1161,7 +1316,7 @@ export default function App() {
           {messages
             .filter((m) => m.id !== "welcome")
             .map((message) => {
-              const { thinkContent, displayContent, isThinking } = parseContent(
+              const { thinkContent, actions, displayContent, isThinking } = parseContent(
                 message.content,
               );
               const isThoughtExpanded = expandedThoughts[message.id];
@@ -1175,7 +1330,7 @@ export default function App() {
                 >
                   {message.role === "user" ? (
                     <div className="max-w-[85%] flex flex-col items-end gap-1.5 group">
-                      <div className="bg-[#383a40] text-[#e8e9ea] px-4 py-2.5 rounded-2xl rounded-tr-sm shadow-sm flex flex-col gap-2 w-full">
+                      <div className="bg-[#383a40] text-[#e8e9ea] px-4 py-2.5 rounded-2xl rounded-tr-sm shadow-sm flex flex-col gap-2">
                         {message.attachments && message.attachments.length > 0 && (
                           <div className="flex flex-wrap gap-2">
                             {message.attachments.map((att, idx) => (
@@ -1201,34 +1356,53 @@ export default function App() {
                             setCopiedMessageId(message.id);
                             setTimeout(() => setCopiedMessageId(null), 2000);
                           }}
-                          className={`flex items-center gap-1.5 px-2 py-1 text-[10px] font-medium uppercase tracking-wider rounded transition-all ${
+                          className={`flex items-center justify-center p-1.5 rounded transition-all ${
                             copiedMessageId === message.id
-                              ? "text-emerald-400 opacity-100"
-                              : "text-gray-500 hover:text-gray-300 hover:bg-white/5 opacity-0 group-hover:opacity-100"
+                              ? "text-emerald-400 bg-emerald-400/10"
+                              : "text-gray-400 hover:text-gray-200 hover:bg-white/5"
                           }`}
+                          title="Copy"
                         >
                           {copiedMessageId === message.id ? (
-                            <>
-                              <Check size={12} />
-                              Copied
-                            </>
+                            <Check size={14} />
                           ) : (
-                            <>
-                              <Copy size={12} />
-                              Copy
-                            </>
+                            <Copy size={14} />
                           )}
                         </button>
                       )}
                     </div>
                   ) : (
                     <div className="w-full flex gap-3">
-                      <div className="w-8 h-8 rounded-full bg-emerald-500/20 flex flex-col items-center justify-center font-bold text-emerald-400 shrink-0">
-                        R
+                      <div className="w-8 h-8 rounded-full bg-emerald-500/20 flex flex-col items-center justify-center font-bold text-emerald-400 shrink-0 relative overflow-hidden ring-1 ring-emerald-500/30">
+                        <AnimatePresence mode="wait">
+                          {(actions.some(a => a.status === "in-progress") || isThinking) ? (
+                            <motion.div
+                              key="thinking"
+                              initial={{ opacity: 0, scale: 0.8, rotate: -20 }}
+                              animate={{ opacity: 1, scale: [1, 1.15, 1], rotate: [0, -15, 15, -15, 15, 0] }}
+                              exit={{ opacity: 0, scale: 0.8, rotate: 20 }}
+                              transition={{ duration: 2, repeat: Infinity, ease: "easeInOut" }}
+                              className="flex items-center justify-center text-[18px] absolute w-full h-full"
+                            >
+                              🤔
+                            </motion.div>
+                          ) : (
+                            <motion.img
+                              key="idle"
+                              initial={{ opacity: 0, scale: 0.8 }}
+                              animate={{ opacity: 1, scale: 1 }}
+                              exit={{ opacity: 0, scale: 0.8 }}
+                              transition={{ duration: 0.4 }}
+                              src="/icon.svg" 
+                              alt="Revin" 
+                              className="w-full h-full object-cover absolute"
+                            />
+                          )}
+                        </AnimatePresence>
                       </div>
                       <div className="flex-1 overflow-hidden min-w-0 pr-4 mt-1">
-                        {/* Thought Process */}
-                        {(thinkContent || isThinking) && (
+                        {/* Process Execution */}
+                        {(actions.length > 0 || thinkContent || isThinking) && (
                           <div className="mb-4">
                             <button
                               onClick={() => toggleThought(message.id)}
@@ -1237,7 +1411,14 @@ export default function App() {
                               {isThinking ? (
                                 <span className="flex items-center gap-2">
                                   <span className="w-3 h-3 rounded-full border-[1.5px] border-emerald-500 border-t-transparent animate-spin" />
-                                  Thinking...
+                                  {actions.length > 0 ? (
+                                    (() => {
+                                      const cur = actions.find((a) => a.status === "in-progress");
+                                      return cur ? `${cur.type}${cur.target ? ` • ${cur.target}` : ""}...` : "Thinking...";
+                                    })()
+                                  ) : (
+                                    "Thinking..."
+                                  )}
                                 </span>
                               ) : (
                                 <span className="flex items-center gap-1 bg-[#2b2d31] px-2 py-1 rounded-[4px] border border-white/5 group-hover:border-white/10 shadow-sm">
@@ -1245,15 +1426,33 @@ export default function App() {
                                     size={12}
                                     className={`transition-transform ${isThoughtExpanded ? "rotate-90" : ""}`}
                                   />
-                                  Thought Process
+                                  Process Execution
                                 </span>
                               )}
                             </button>
 
-                          {(isThoughtExpanded || isThinking) &&
-                              thinkContent && (
-                                <ThoughtDisplay content={thinkContent} isThinking={isThinking} />
-                              )}
+                            {(isThoughtExpanded || isThinking) && (
+                              <div className="mt-3 pl-3 border-l-[1.5px] border-white/10 flex flex-col gap-2">
+                                {thinkContent && actions.length === 0 && (
+                                  <ThoughtDisplay content={thinkContent} isThinking={isThinking} />
+                                )}
+                                {actions.map((act, i) => (
+                                  <div key={i} className="text-[11px] text-gray-400 bg-black/20 border border-white/5 rounded p-2">
+                                    <div className="flex items-center gap-2 font-medium text-emerald-400 capitalize mb-0.5">
+                                      {act.status === "in-progress" ? (
+                                        <span className="w-2 h-2 rounded-full border-[1.5px] border-emerald-500 border-t-transparent animate-spin" />
+                                      ) : (
+                                        <Check size={10} />
+                                      )}
+                                      {act.type} {act.target && <span className="text-gray-500 font-normal">→ {act.target}</span>}
+                                    </div>
+                                    <div className="pl-4 text-xs whitespace-pre-wrap">
+                                      {act.content}
+                                    </div>
+                                  </div>
+                                ))}
+                              </div>
+                            )}
                           </div>
                         )}
 
@@ -1304,6 +1503,7 @@ export default function App() {
                             </Markdown>
                           </div>
                         )}
+                        <WebSourcesDisplay actions={actions} />
                       </div>
                     </div>
                   )}
